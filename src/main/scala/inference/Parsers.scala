@@ -7,14 +7,17 @@ object Parsers extends App {
   def literal(str: String): Parser[String, Char, Unit] =
     Parser.string(str, ())
 
+  lazy val reserved = Set("if", "then", "else")
+
   lazy val ident: Parser[String, Char, String] =
     Parser.alphaNumeric.repeat.string
+      .filter((res: String) => !reserved.contains(res), "reserved word")
 
-  private val startLam = Parser.char('\\') | Parser.char('λ')
-  private val lamArrow = Parser.char('→') | literal("->")
+  private lazy val startLam = Parser.char('\\') | Parser.char('λ')
+  private lazy val lamArrow = Parser.char('→') | literal("->")
   lazy val lam =
-    (startLam ~ variable ~ lamArrow ~ term)
-      .map { case (v, term) => Term.Lam(v, term) }
+    (startLam ~ variable ~ lamArrow ~ spaces ~ term)
+      .map { case (v, term) => Term.Lambda(v, term) }
 
   lazy val spaces =
     Parser.char(' ').repeat0.unit
@@ -40,19 +43,26 @@ object Parsers extends App {
 
   lazy val literal = literalInt | literalBool
 
+  lazy val ifThenElse =
+    (spaces ~ literal("if") ~ spaces ~ term
+      ~ spaces ~ literal("then") ~ spaces ~ term ~ spaces ~ literal(
+        "else"
+      ) ~ spaces ~ term ~ spaces)
+      .map { case (cond, thenBranch, elseBranch) => Term.IfThenElse(cond, thenBranch, elseBranch) }
+
   lazy val term0: Parser[String, Char, Term] =
-    parenthesizedTerm | lam | literal | variable
+    parenthesizedTerm | ifThenElse | lam | literal | variable
 
   lazy val term: Parser[String, Char, Term] =
     term0.flatMap { t =>
       term0.repeat
         .map { ts =>
-          ts.foldLeft(t) { case (acc, t) => Term.App(acc, t) }
+          ts.foldLeft(t) { case (acc, t) => Term.Apply(acc, t) }
         }
         .orElse(Parser.succeed(t))
     }
 
-  val example = """(\x -> true) 123"""
+  val example = """\x -> (if true then 10 else 10)"""
 
   term.parseString(example) match {
     case Left(error) => println(error)
@@ -61,4 +71,6 @@ object Parsers extends App {
       println(result.prettyPrint)
   }
 
+  def parse(str: String): Term =
+    term.parseString(str).toOption.get
 }

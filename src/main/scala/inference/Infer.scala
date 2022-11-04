@@ -55,13 +55,7 @@ object Infer extends App {
     val empty: Context = Context(Map.empty)
   }
 
-  def inferTop(term: Term): Type = {
-    Type.TVar.char = 'a'
-    infer(term, Context.empty)._2
-  }
-
   final case class Knowledge(map: Map[TVar, Type]) {
-
     def ++(that: Knowledge): Knowledge =
       Knowledge(that.map.map { case (tv, ty) =>
         tv -> apply(ty)
@@ -84,34 +78,36 @@ object Infer extends App {
     val empty: Knowledge = Knowledge(Map.empty)
   }
 
-  // t1 unify t2 -> k
-  // k(t1) == k(t2)
-  // a unify Bool = k (a = Bool)
-  // Bool Bool
+  def inferTop(term: Term): Type = {
+    Type.TVar.char = 'a'
+    infer(term, Context.empty)._2
+  }
 
-  // Boolean unify Int = BOOM
-
-  // a unify Int   =  a -> Int
-  // Int unify a   =  a -> Int
-  // TODO: add occursCheck
   def unify(t1: Type, t2: Type): Knowledge =
     (t1, t2) match {
       case (tv1: TVar, tv2: TVar) if tv1 == tv2 =>
         Knowledge.empty
 
-      case (tv1: TVar, t2) => Knowledge(Map(tv1 -> t2))
-      case (t1, tv1: TVar) => Knowledge(Map(tv1 -> t1))
+      case (tv: TVar, t) if !occurs(tv, t) => Knowledge(Map(tv -> t))
+      case (t, tv: TVar) if !occurs(tv, t) => Knowledge(Map(tv -> t))
 
       case (TArr(a, b), TArr(c, d)) =>
         val k1 = unify(a, c)
         val k2 = unify(k1(b), k1(d))
-        k1 ++ k2
+        k2 ++ k1
 
       case (t1: TCon, t2: TCon) if t1 == t2 =>
         Knowledge.empty
 
       case (t1, t2) =>
         throw new RuntimeException(s"Cannot unify $t1 with $t2")
+    }
+
+  def occurs(tvar: TVar, t: Type): Boolean =
+    t match {
+      case `tvar`       => true
+      case TArr(t1, t2) => occurs(tvar, t1) || occurs(tvar, t2)
+      case _            => false
     }
 
   def infer(term: Term, ctx: Context): (Knowledge, Type) =
@@ -129,17 +125,17 @@ object Infer extends App {
       // x -> if x then 10 else 20
       // x -> e
       case Term.Lambda(x, e) =>
-        val tv             = Type.TVar.fresh
-        val (k1, bodyType) = infer(e, ctx.extend(x, tv))
-        k1 -> Type.TArr(k1(tv), k1(bodyType))
+        val tv       = Type.TVar.fresh
+        val (k1, t1) = infer(e, ctx.extend(x, tv))
+        k1 -> Type.TArr(k1(tv), k1(t1))
 
-      // (\x -> y + 10) y
+      // (\id -> if true then id 10 else id 20) (\x -> x)
       case Term.Apply(f, e) =>
-        val (k1, ft) = infer(f, ctx)
-        val (k2, et) = infer(e, k1(ctx))
+        val (k1, t1) = infer(f, ctx)
+        val (k2, t2) = infer(e, k1(ctx))
         val tv       = TVar.fresh
-        val k3       = unify(k2(ft), TArr(et, tv))
-        k1 ++ k2 ++ k3 -> k3(ft)
+        val k3       = unify(k2(t1), TArr(t2, tv))
+        k3 ++ k2 ++ k1 -> k3(tv)
 
       case Term.IfThenElse(cond, thenBranch, elseBranch) =>
         val (k1, condType) = infer(cond, ctx)
@@ -147,26 +143,26 @@ object Infer extends App {
         val (k3, elseType) = infer(elseBranch, k2(ctx))
         val k4             = unify(k3(condType), Type.boolType)
         val k5             = unify(k4(thenType), k4(elseType))
-        k1 ++ k2 ++ k3 ++ k4 ++ k5 -> k5(thenType)
+        k5 ++ k4 ++ k3 ++ k2 ++ k1 -> k5(thenType)
     }
 
   val boolTerm = Parsers.parse("true")
-  println(inferTop(boolTerm))
+//  println(inferTop(boolTerm))
 
   val intTerm = Parsers.parse("10")
-  println(inferTop(intTerm))
+//  println(inferTop(intTerm))
 
   val lambdaTerm = Parsers.parse("""\x -> (\y -> x)""")
-  println(inferTop(lambdaTerm))
+//  println(inferTop(lambdaTerm))
 
   def identity[A](x: A): A = x
   // Lambda
   // term: \x -> x
   // type:  a -> a
   val t1 = Parsers.parse("""\x -> x""") // a -> a
-  println("")
-  println(Eval.eval(t1))
-  println(inferTop(t1))
+//  println("")
+//  println(Eval.eval(t1))
+//  println(inferTop(t1))
 
   // Application
   // term: (\x -> x) (if true then 10 else 20)
@@ -179,8 +175,8 @@ object Infer extends App {
   //
   // \x -> if x then 10 else 20
   val t20 = Parsers.parse("""\x -> if x then 10 else 20""") // Bool -> Int
-  println(Eval.eval(t20))
-  println(inferTop(t20))
+//  println(Eval.eval(t20))
+//  println(inferTop(t20))
 
   // if 50 then 10 else 20
   // String -> Term -> (Term, Type) -> Value
@@ -197,8 +193,12 @@ object Infer extends App {
 
   // undecidable!
   // (\id -> if true then id 10 else id 20) (\x -> x)
-  val t5 = Parsers.parse("""(\id -> id 10 .... id true )(\x -> x)""") // 10
-  println("wacky")
+  val t4 = Parsers.parse("""\id -> id 10""")
+  println(t4)
+//  val t4 = Parsers.parse("""(\id -> if true then id 10 else id 20)""")
+  val t5 = Parsers.parse("""(\id -> if true then (id 10) else 20)""") // 10
+//  println("wacky")
   println(inferTop(t5))
+  println(Eval.eval(t5))
 
 }
